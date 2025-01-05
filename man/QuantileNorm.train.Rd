@@ -92,7 +92,7 @@ model_nQ_99 <- QuantileNorm.train(
   channels = channels,
   transformList = transformList,
   nQ = 99,
-  plot = TRUE)
+  plot = FALSE)
 dev.off()
 
 # With flowSet/flowframe as input

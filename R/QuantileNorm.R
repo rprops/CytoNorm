@@ -28,7 +28,7 @@
 #' dir <- system.file("extdata", package = "CytoNorm")
 #' files <- list.files(dir, pattern = "fcs$")
 #'
-#' ff <- flowCore::read.FCS(file.path(dir, files[1]))
+#' ff <- flowCore::read.flowSet(file.path(dir, files))
 #' channels <- grep("Di$", flowCore::colnames(ff), value = TRUE)
 #' transformList <- flowCore::transformList(channels,
 #'                                          cytofTransform)
@@ -108,6 +108,11 @@ getQuantiles <- function(files,
                                          keepOrder = TRUE,
                                          channels = channels,
                                          ...)
+      # convert to flowSet
+      fcs.list <- list()
+      fcs.list[[flowCore::identifier(ff)]] <- ff
+      ff <- as(fcs.list, "flowSet")
+      
     } else if (length(ids) == 1) {
       if (!is(files, "flowSet")) {
         o <- capture.output(ff <- flowCore::read.flowSet(files[ids], ...))
@@ -247,7 +252,7 @@ getQuantiles <- function(files,
 #'   channels = channels,
 #'   transformList = transformList,
 #'   nQ = 99,
-#'   plot = TRUE)
+#'   plot = FALSE)
 #' dev.off()
 #' 
 #' # With flowSet/flowframe as input

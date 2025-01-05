@@ -59,7 +59,7 @@ getQuantiles
 dir <- system.file("extdata", package = "CytoNorm")
 files <- list.files(dir, pattern = "fcs$")
 
-ff <- flowCore::read.FCS(file.path(dir, files[1]))
+ff <- flowCore::read.flowSet(file.path(dir, files))
 channels <- grep("Di$", flowCore::colnames(ff), value = TRUE)
 transformList <- flowCore::transformList(channels,
                                          cytofTransform)
