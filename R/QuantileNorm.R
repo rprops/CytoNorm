@@ -37,7 +37,8 @@
 #' quantiles <- getQuantiles(files = file.path(dir, files),
 #'                           channels = channels,
 #'                           transformList = transformList)
-#' # Execute directly on flowSet
+#'                           
+#' # Execute directly on flowSet or flowframe
 #' quantiles <- getQuantiles(files = ff,
 #'                           channels = channels,
 #'                           transformList = transformList)
@@ -248,7 +249,19 @@ getQuantiles <- function(files,
 #'   nQ = 99,
 #'   plot = TRUE)
 #' dev.off()
-#'
+#' 
+#' # With flowSet/flowframe as input
+#' fs <- flowCore::read.flowSet(path = system.file("extdata", package = "CytoNorm"),
+#' files = list.files(system.file("extdata", package = "CytoNorm"), pattern = ".fcs"))
+#' 
+#' model_nQ_99 <- QuantileNorm.train(
+#'   files = fs[c(1,3,5)],
+#'   labels = train_data$Batch,
+#'   channels = channels,
+#'   transformList = transformList,
+#'   nQ = 99,
+#'   plot = TRUE)
+#' 
 #' png("nQ99_limited.png",
 #'     width = length(channels) * 300,
 #'     height = (nrow(train_data) * 2 + 1) * 300)
@@ -309,155 +322,222 @@ QuantileNorm.train <- function(files,
                                plot = FALSE,
                                plotTitle = "Quantiles",
                                ...) {
+  # Mutate to flowSet if needed
+  if (is(files, "flowFrame")) {
+    fcs.list <- list()
+    fcs.list[[flowCore::identifier(files)]] <- files
+    files <- as(fcs.list, "flowSet")
+  }
   
-    if(length(labels) != length(files)){
-        stop("Input parameters 'labels' and 'files'",
-             " should have the same length")
-    }
-
-    labels <- as.character(labels)
-
-    if(plot){
-        xdim = 1 + length(channels)
-        ydim = 2 + 2*length(unique(labels))
-        graphics::layout(matrix(1:(xdim*ydim), ncol = xdim, byrow = TRUE))
-        graphics::par(mar=c(1, 1, 0, 0))
-        textPlot(plotTitle)
-        ff_tmp <- flowCore::read.FCS(files[file.exists(files)][1],...)
-
-        for(channel in channels){
-            marker <- flowCore::getChannelMarker(ff_tmp, channel)[,2]
-            if(is.na(marker)){
-                textPlot(channel)
-            } else {
-                textPlot(paste0(marker, " (", channel, ")"))
-            }
-        }
-    }
-
-    quantiles <- getQuantiles(files = files,
-                              labels = labels,
-                              channels = channels,
-                              transformList = transformList,
-                              nQ = nQ,
-                              quantileValues = quantileValues,
-                              verbose = verbose,
-                              plot = plot,
-                              ...)
-
-    if(!is.null(limit)){
-        quantiles <- lapply(quantiles, function(quantile_matrix){
-            rbind(quantile_matrix,
-                  matrix(limit,
-                         nrow = length(limit),
-                         ncol = ncol(quantile_matrix),
-                         byrow = FALSE,
-                         dimnames = list(paste0("Fixed_",limit), NULL)))
-        })
-    }
-
-    # Get the goal distributions
-    if(is.character(goal) && goal == "mean"){
-        refQuantiles <- matrix(apply(matrix(unlist(quantiles),
-                                            ncol = length(unique(labels))),
-                                     1, mean, na.rm = TRUE),
-                               nrow = nQ+length(limit),
-                               dimnames = list(rownames(quantiles[[1]]),
-                                               channels))
-    } else if (is.numeric(goal)) {
-        if(length(goal) == nQ){
-            refQuantiles <- matrix(goal,
-                                   nrow = nQ,
-                                   ncol = length(channels),
-                                   dimnames = list(quantileValues,
-                                                   channels))
-        } else if (is.matrix(goal)){
-          if ((nrow(goal) == nQ) & (ncol(goal) == length(channels))){
-            refQuantiles <- goal
-          } else if ((nrow(goal) != nQ)){
-            stop(paste0(nrow(goal), " quantiles in the goal distribution and ", 
-                        nQ, " quantiles in the CytoNorm call.
-  This should be the same."))
-          } else {
-            stop(paste0(ncol(goal), " channels in the goal distribution and ", 
-                        length(channels), " channels in the CytoNorm call.
-  This should be the same."))
-          }
-        } else {
-            stop("Goal should be 'mean', a batch label, ",
-                   "a numeric vector of length nQ, or a matrix with nQ rows
-                   and length(channels) columns.")
-        }
-    } else if (goal %in% unique(labels)) {
-        refQuantiles <- quantiles[[goal]]
+  if (length(labels) != length(files)) {
+    stop("Input parameters 'labels' and 'files' should have the same length")
+  }
+  
+  labels <- as.character(labels)
+  
+  if (plot) {
+    xdim = 1 + length(channels)
+    ydim = 2 + 2 * length(unique(labels))
+    graphics::layout(matrix(1:(xdim * ydim), ncol = xdim, byrow = TRUE))
+    graphics::par(mar = c(1, 1, 0, 0))
+    textPlot(plotTitle)
+    if(!is(files, "flowSet")) {
+      ff_tmp <- flowCore::read.flowSet(files[file.exists(files)][1], ...)
     } else {
-        stop("Goal should be 'mean', a batch label, ",
-             "a numeric vector of length nQ, or a matrix with nQ rows
-             and length(channels) columns.")
+      ff_tmp <- files[1]
     }
-
-    if(plot){
-        textPlot("Goal distribution")
-        for(channel in channels){
-            graphics::plot(0, type = "n", xlim = c(0, 8),
-                           bty = "n", xaxt = "n", yaxt = "n",
-                           xlab = "", ylab = "", main = "")
-            graphics::abline(v = refQuantiles[,channel])
-        }
+    for (channel in channels) {
+      marker <- flowCore::getChannelMarker(ff_tmp[[1]], channel)[, 2]
+      if (is.na(marker)) {
+        textPlot(channel)
+      } else {
+        textPlot(paste0(marker, " (", channel, ")"))
+      }
     }
-
-    # Compute splines for each label
-    splines <- list()
-    if(verbose) message("Computing Splines")
-
-    for(label in unique(labels)){
-        if(verbose) message("  ",label)
-        if(plot){ textPlot(label) }
-        splines[[label]] <- list()
-        if(!is.null(quantiles[[label]]) & !any(is.na(quantiles[[label]])) & !any(is.na(refQuantiles))){
-            for(channel in channels){
-
-                refQ <- refQuantiles[, channel]
-                labelQ <- quantiles[[label]][, channel]
-
-                if(length(unique(labelQ)) > 1){
-                    suppressWarnings(spl <- stats::splinefun(labelQ,
-                                                             refQ,
-                                                             method="monoH.FC"))
-                } else {
-                    spl <- identityFunction
-                    warning("Not enough unique quantiles  for ", label, " in ",
-                            channel, ". The identity function will be used.")
-                }
-                splines[[label]][[channel]] <- spl
-
-                if(plot){
-                    graphics::plot(labelQ, refQ, xlim = c(0, 8), ylim = c(0, 8),
-                                   pch = 19, bty = "n", xaxt = "n", yaxt = "n",
-                                   xlab = "", ylab = "", main = "")
-                    graphics::lines(c(-0.5, 8), c(-0.5, 8), col="#999999")
-                    x <- seq(-0.5, 8, 0.1)
-                    graphics::lines(x,
-                                    splines[[label]][[channel]](x),
-                                    col = "#b30000")
-                }
-
-            }
+  }
+  
+  quantiles <- getQuantiles(
+    files = files,
+    labels = labels,
+    channels = channels,
+    transformList = transformList,
+    nQ = nQ,
+    quantileValues = quantileValues,
+    verbose = verbose,
+    plot = plot,
+    ...
+  )
+  
+  if (!is.null(limit)) {
+    quantiles <- lapply(quantiles, function(quantile_matrix) {
+      rbind(
+        quantile_matrix,
+        matrix(
+          limit,
+          nrow = length(limit),
+          ncol = ncol(quantile_matrix),
+          byrow = FALSE,
+          dimnames = list(paste0("Fixed_", limit), NULL)
+        )
+      )
+    })
+  }
+  
+  # Get the goal distributions
+  if (is.character(goal) && goal == "mean") {
+    refQuantiles <- matrix(
+      apply(matrix(unlist(quantiles), ncol = length(unique(
+        labels
+      ))), 1, mean, na.rm = TRUE),
+      nrow = nQ + length(limit),
+      dimnames = list(rownames(quantiles[[1]]), channels)
+    )
+  } else if (is.numeric(goal)) {
+    if (length(goal) == nQ) {
+      refQuantiles <- matrix(
+        goal,
+        nrow = nQ,
+        ncol = length(channels),
+        dimnames = list(quantileValues, channels)
+      )
+    } else if (is.matrix(goal)) {
+      if ((nrow(goal) == nQ) & (ncol(goal) == length(channels))) {
+        refQuantiles <- goal
+      } else if ((nrow(goal) != nQ)) {
+        stop(
+          paste0(
+            nrow(goal),
+            " quantiles in the goal distribution and ",
+            nQ,
+            " quantiles in the CytoNorm call.
+  This should be the same."
+          )
+        )
+      } else {
+        stop(
+          paste0(
+            ncol(goal),
+            " channels in the goal distribution and ",
+            length(channels),
+            " channels in the CytoNorm call.
+  This should be the same."
+          )
+        )
+      }
+    } else {
+      stop(
+        "Goal should be 'mean', a batch label, ",
+        "a numeric vector of length nQ, or a matrix with nQ rows
+                   and length(channels) columns."
+      )
+    }
+  } else if (goal %in% unique(labels)) {
+    refQuantiles <- quantiles[[goal]]
+  } else {
+    stop(
+      "Goal should be 'mean', a batch label, ",
+      "a numeric vector of length nQ, or a matrix with nQ rows
+             and length(channels) columns."
+    )
+  }
+  
+  if (plot) {
+    textPlot("Goal distribution")
+    for (channel in channels) {
+      graphics::plot(
+        0,
+        type = "n",
+        xlim = c(0, 8),
+        bty = "n",
+        xaxt = "n",
+        yaxt = "n",
+        xlab = "",
+        ylab = "",
+        main = ""
+      )
+      graphics::abline(v = refQuantiles[, channel])
+    }
+  }
+  
+  # Compute splines for each label
+  splines <- list()
+  if (verbose)
+    message("Computing Splines")
+  
+  for (label in unique(labels)) {
+    if (verbose)
+      message("  ", label)
+    if (plot) {
+      textPlot(label)
+    }
+    splines[[label]] <- list()
+    if (!is.null(quantiles[[label]]) &
+        !any(is.na(quantiles[[label]])) & !any(is.na(refQuantiles))) {
+      for (channel in channels) {
+        refQ <- refQuantiles[, channel]
+        labelQ <- quantiles[[label]][, channel]
+        
+        if (length(unique(labelQ)) > 1) {
+          suppressWarnings(spl <- stats::splinefun(labelQ, refQ, method = "monoH.FC"))
         } else {
-            warning("Not enough cells for ", label,
-                    "\nThe identity function will be used.")
-            for(channel in channels){
-                splines[[label]][[channel]] <- identityFunction
-                if(plot){
-                    graphics::plot(c(0,8), c(0,8), col = "#999999", type = "l",
-                                   xlim = c(0,8), ylim = c(0,8),
-                                   pch = 19, bty = "n", xaxt = "n", yaxt = "n",
-                                   xlab = "", ylab = "", main = "")
-                }
-            }
+          spl <- identityFunction
+          warning(
+            "Not enough unique quantiles for ",
+            label,
+            " in ",
+            channel,
+            ". The identity function will be used."
+          )
         }
+        splines[[label]][[channel]] <- spl
+        
+        if (plot) {
+          graphics::plot(
+            labelQ,
+            refQ,
+            xlim = c(0, 8),
+            ylim = c(0, 8),
+            pch = 19,
+            bty = "n",
+            xaxt = "n",
+            yaxt = "n",
+            xlab = "",
+            ylab = "",
+            main = ""
+          )
+          graphics::lines(c(-0.5, 8), c(-0.5, 8), col = "#999999")
+          x <- seq(-0.5, 8, 0.1)
+          graphics::lines(x, splines[[label]][[channel]](x), col = "#b30000")
+        }
+        
+      }
+    } else {
+      warning("Not enough cells for ",
+              label,
+              "\nThe identity function will be used.")
+      for (channel in channels) {
+        splines[[label]][[channel]] <- identityFunction
+        if (plot) {
+          graphics::plot(
+            c(0, 8),
+            c(0, 8),
+            col = "#999999",
+            type = "l",
+            xlim = c(0, 8),
+            ylim = c(0, 8),
+            pch = 19,
+            bty = "n",
+            xaxt = "n",
+            yaxt = "n",
+            xlab = "",
+            ylab = "",
+            main = ""
+          )
+        }
+      }
     }
-    named.list(channels, splines, quantiles, quantileValues, refQuantiles)
+  }
+  named.list(channels, splines, quantiles, quantileValues, refQuantiles)
 }
 
 
@@ -522,6 +602,17 @@ QuantileNorm.train <- function(files,
 #'                        validation_data$Batch,
 #'                        transformList = transformList,
 #'                        transformList.reverse = transformList.reverse)
+#'                        
+#' # With flowSet/flowframe as input
+#' fs <- flowCore::read.flowSet(path = system.file("extdata", package = "CytoNorm"),
+#' files = list.files(system.file("extdata", package = "CytoNorm"), pattern = ".fcs"))
+#'
+#' fcs_norm <- QuantileNorm.normalize(model = model_nQ_99,
+#'                        files = files,
+#'                        labels = validation_data$Batch,
+#'                        transformList = transformList,
+#'                        transformList.reverse = transformList.reverse)
+#'
 #' @export
 QuantileNorm.normalize <- function(model,
                                    files,
@@ -532,83 +623,172 @@ QuantileNorm.normalize <- function(model,
                                    prefix = "Norm_",
                                    removeOriginal = FALSE,
                                    verbose = FALSE,
-                                   ...){
-
-    if(is.null(model$channels) |
-       is.null(model$splines) |
-       is.null(model$quantiles)){
-        stop("The 'model' parameter should be the result of using the ",
-             "QuantileNorm.train function.")
-    }
-    if(length(labels) != length(files)){
-        stop("Input parameters 'labels' and 'files' ",
-             "should have the same length")
-    }
-
-    # Create temporary directory
-    if (!dir.exists(outputDir)) dir.create(outputDir)
-
-    labels <- labels
-    channels <- model$channels
-
-    # Normalize each file based on label
-    for(i in seq_along(files)){
-        file <- files[i]
-
-        if(file.exists(file)){
-            label <- as.character(labels[i])
-            if(verbose) message("  ",file," (",label,")")
-
-            if(label %in% names(model$splines)){
-                # Read the file
-                ff <- flowCore::read.FCS(file,...)
-
-                # Transform if necessary
-                if(!is.null(transformList)){
-                    #description_original <- ff@description
-                    #parameters_original <- ff@parameters
-                    ff <- flowCore::transform(ff, transformList)
-                }
-
-                # Overwrite the values with the normalized values
-                if (verbose) message("Normalizing ",label)
-                for (channel in channels) {
-                    flowCore::exprs(ff)[, channel] <-
-                        model$splines[[label]][[channel]](
-                            flowCore::exprs(ff[, channel]))
-                    infinities <- is.infinite(flowCore::exprs(ff)[, channel])
-                    if(any(infinities)){
-                        warning(paste0(label, " ", channel,
-                                       ": Replacing ", sum(infinities),
-                                       " infinity values by max value."))
-                        flowCore::exprs(ff)[infinities, channel] <-
-                            sign(flowCore::exprs(ff)[infinities, channel]) *
-                            max(abs(flowCore::exprs(ff)[-infinities, channel]))
-                    }
-                }
-
-                if (!is.null(transformList.reverse)) {
-                    ff <- flowCore::transform(ff, transformList.reverse)
-                } else if (!is.null(transformList)) {
-                    warning("Please provide a reverse transformation list if
-                            you want the files to be saved in the original
-                            untransformed space.")
-                }
-
-                if (removeOriginal) {
-                    file.remove(file)
-                }
-
-                suppressWarnings(flowCore::write.FCS(ff,
-                                                     filename = file.path(outputDir,
-                                                                          paste0(prefix,
-                                                                                 gsub(".*/","",file)))))
-
-            } else {
-                warning("The model was not trained for ", label, ".")
+                                   ...) {
+  
+  # Mutate to flowSet if needed
+  if (is(files, "flowFrame")) {
+    fcs.list <- list()
+    fcs.list[[flowCore::identifier(files)]] <- files
+    files <- as(fcs.list, "flowSet")
+  }
+  
+  # Sanity checks
+  if (is.null(model$channels) |
+      is.null(model$splines) |
+      is.null(model$quantiles)) {
+    stop(
+      "The 'model' parameter should be the result of using the ",
+      "QuantileNorm.train function."
+    )
+  }
+  if (length(labels) != length(files)) {
+    stop("Input parameters 'labels' and 'files' ",
+         "should have the same length")
+  }
+  
+  # Create temporary directory
+  if (!dir.exists(outputDir))
+    dir.create(outputDir)
+  
+  labels <- labels
+  channels <- model$channels
+  
+  # Normalize each file based on label
+  if (!is(files, "flowSet")) {
+    message(date(), " --- applying files processing workflow")
+    for (i in seq_along(files)) {
+      file <- files[i]
+      
+      if (file.exists(file)) {
+        label <- as.character(labels[i])
+        if (verbose)
+          message("  ", file, " (", label, ")")
+        
+        if (label %in% names(model$splines)) {
+          # Read the file
+          ff <- flowCore::read.FCS(file, ...)
+          
+          # Transform if necessary
+          if (!is.null(transformList)) {
+            #description_original <- ff@description
+            #parameters_original <- ff@parameters
+            ff <- flowCore::transform(ff, transformList)
+          }
+          
+          # Overwrite the values with the normalized values
+          if (verbose)
+            message("Normalizing ", label)
+          for (channel in channels) {
+            flowCore::exprs(ff)[, channel] <-
+              model$splines[[label]][[channel]](flowCore::exprs(ff[, channel]))
+            infinities <- is.infinite(flowCore::exprs(ff)[, channel])
+            if (any(infinities)) {
+              warning(
+                paste0(
+                  label,
+                  " ",
+                  channel,
+                  ": Replacing ",
+                  sum(infinities),
+                  " infinity values by max value."
+                )
+              )
+              flowCore::exprs(ff)[infinities, channel] <-
+                sign(flowCore::exprs(ff)[infinities, channel]) *
+                max(abs(flowCore::exprs(ff)[-infinities, channel]))
             }
+          }
+          
+          if (!is.null(transformList.reverse)) {
+            ff <- flowCore::transform(ff, transformList.reverse)
+          } else if (!is.null(transformList)) {
+            warning(
+              "Please provide a reverse transformation list if
+                            you want the files to be saved in the original
+                            untransformed space."
+            )
+          }
+          
+          if (removeOriginal) {
+            file.remove(file)
+          }
+          
+          suppressWarnings(flowCore::write.FCS(ff, filename = file.path(outputDir, paste0(
+            prefix, gsub(".*/", "", file)
+          ))))
+          
         } else {
-            warning(file, " does not exist, skipped.")
+          warning("The model was not trained for ", label, ".")
         }
+      } else {
+        warning(file, " does not exist, skipped.")
+      }
     }
+  } else {
+    message(date(), " --- applying flowSet processing workflow")
+    # Transform if necessary
+    if (!is.null(transformList)) {
+      #description_original <- ff@description
+      #parameters_original <- ff@parameters
+      files <- flowCore::transform(files, transformList)
+    }
+    
+    # Define a function to process a single flowFrame
+    process_flowFrame_with_label <- function(ff, label, model, channels) {
+      for (channel in channels) {
+        # Apply the model's spline function to the channel's expression values
+        flowCore::exprs(ff)[, channel] <-
+          model$splines[[label]][[channel]](flowCore::exprs(ff[, channel]))
+        
+        # Identify and handle infinite values
+        infinities <- is.infinite(flowCore::exprs(ff)[, channel])
+        if (any(infinities)) {
+          warning(
+            paste0(
+              label,
+              " ",
+              channel,
+              ": Replacing ",
+              sum(infinities),
+              " infinity values by max value."
+            )
+          )
+          flowCore::exprs(ff)[infinities, channel] <-
+            sign(flowCore::exprs(ff)[infinities, channel]) *
+            max(abs(flowCore::exprs(ff)[!infinities, channel]))
+        }
+      }
+      return(ff)
+    }
+    
+    # Perform normalization
+    for (i in seq_along(files)) {
+      if(verbose){
+        message("Processing flowFrame ", i, " with label: ", labels[i])
+      }
+      
+      # Process the flowFrame and store it back in the flowSet
+      files[[i]] <- process_flowFrame_with_label(
+        files[[i]],
+        label = labels[i],
+        model = model,
+        channels = channels
+      )
+    }
+    
+    # Reverse transformation
+    if (!is.null(transformList.reverse)) {
+      files <- flowCore::transform(files, transformList.reverse)
+    } else if (!is.null(transformList)) {
+      warning(
+        "Please provide a reverse transformation list if
+                            you want the files to be saved in the original
+                            untransformed space."
+      )
+    }
+    
+    # Return normalized flowSet
+    return(files)
+  }
+
 }

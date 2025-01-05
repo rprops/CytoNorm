@@ -68,7 +68,8 @@ transformList <- flowCore::transformList(channels,
 quantiles <- getQuantiles(files = file.path(dir, files),
                           channels = channels,
                           transformList = transformList)
-# Execute directly on flowSet
+                          
+# Execute directly on flowSet or flowframe
 quantiles <- getQuantiles(files = ff,
                           channels = channels,
                           transformList = transformList)

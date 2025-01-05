@@ -95,6 +95,18 @@ model_nQ_99 <- QuantileNorm.train(
   plot = TRUE)
 dev.off()
 
+# With flowSet/flowframe as input
+fs <- flowCore::read.flowSet(path = system.file("extdata", package = "CytoNorm"),
+files = list.files(system.file("extdata", package = "CytoNorm"), pattern = ".fcs"))
+
+model_nQ_99 <- QuantileNorm.train(
+  files = fs[c(1,3,5)],
+  labels = train_data$Batch,
+  channels = channels,
+  transformList = transformList,
+  nQ = 99,
+  plot = TRUE)
+
 png("nQ99_limited.png",
     width = length(channels) * 300,
     height = (nrow(train_data) * 2 + 1) * 300)
