@@ -1,6 +1,7 @@
 #' getQuantiles
 #'
-#' @param files       Full paths of to the fcs files of the samples
+#' @param files       Full paths of the fcs files of the samples or alternatively
+#' a flowSet.
 #' @param channels    Names of the channels to compute the quantiles for
 #' @param transformList   Transformation list to pass to the flowCore
 #'                    \code{transform} function
@@ -21,7 +22,8 @@
 #' @param plot        If TRUE, plots are generated showing all quantiles.
 #'                    Default = FALSE.
 #' @param ...         Additional arguments to pass to read.FCS
-#'
+#' @importFrom flowCore sampleNames transform identifier
+#' @importFrom FlowSOM AggregateFlowFrames
 #' @examples
 #' dir <- system.file("extdata", package = "CytoNorm")
 #' files <- list.files(dir, pattern = "fcs$")
@@ -31,7 +33,12 @@
 #' transformList <- flowCore::transformList(channels,
 #'                                          cytofTransform)
 #'
+#' # Execute via file path
 #' quantiles <- getQuantiles(files = file.path(dir, files),
+#'                           channels = channels,
+#'                           transformList = transformList)
+#' # Execute directly on flowSet
+#' quantiles <- getQuantiles(files = ff,
 #'                           channels = channels,
 #'                           transformList = transformList)
 #'
@@ -54,95 +61,127 @@ getQuantiles <- function(files,
                          selection = NULL,
                          verbose = FALSE,
                          plot = FALSE,
-                         ...){
-
-    if (is.null(labels)) labels <- files
-
-    # Compute quantiles for each label
-    if (verbose) message("Computing Quantiles")
-
-    quantiles <- list()
-
-    if (is.null(quantileValues)) {
-        quantileValues <- ((1:(nQ+1))/(nQ+1))[-(nQ+1)]
+                         ...) {
+  
+  # Mutate to flowSet if needed
+  if(is(files, "flowFrame")) {
+    fcs.list <- list()
+    fcs.list[[flowCore::identifier(files)]] <- files
+    files <- as(fcs.list, "flowSet")
+  }
+  
+  # Default labels where needed
+  if (is.null(labels)) {
+    if (!is(files, "flowSet")) {
+      labels <- files
     } else {
-        nQ <- length(quantileValues)
+      labels <- sampleNames(files)
     }
-
-    for(label in unique(labels)){
-        ids <- which(labels == label & file.exists(files))
-        if(verbose) message("  ", label, " (FileID ", paste(ids, collapse = "," ), ")")
-
-        # Read the file(s) and transform if necessary
-        if (length(ids) > 1) {
-            ff <- FlowSOM::AggregateFlowFrames(files[ids], 1e12,
-                                               keepOrder = TRUE,
-                                               channels = channels,
-                                               ...)
-        } else if(length(ids) == 1) {
-            o <- capture.output(ff <- flowCore::read.FCS(files[ids],...))
-            if (verbose) message(o)
-        } else {
-            ff <- NULL
-        }
-
-        if (!is.null(ff) && !is.null(transformList)) {
-            ff <- flowCore::transform(ff, transformList)
-        }
-
-        if (!is.null(ff) & !is.null(selection)){
-            ff <- ff[selection[[file]], ]
-        }
-
-
-        # Compute quantiles for all channels to normalize
-        if (!is.null(ff) && flowCore::nrow(ff) > minCells) {
-            quantiles[[label]] <- apply(flowCore::exprs(ff)[, channels, drop = FALSE],
-                                        2,
-                                        function(x){
-                                            stats::quantile(x,
-                                                            quantileValues)
-                                        })
-
-            if(plot){
-                textPlot(label)
-                for(channel in channels){
-                    dens <- stats::density(flowCore::exprs(ff)[, channel],
-                                           bw = 0.1)
-                    graphics::plot(dens,
-                                   bty = "n", xaxt = "n", yaxt = "n",
-                                   xlab = "", ylab = "", main = "",
-                                   xlim = c(0,
-                                            max(flowCore::exprs(ff)[, channel],
-                                                8)))
-                    graphics::abline(v = quantiles[[label]][, channel],
-                                     col = "grey")
-                    graphics::lines(dens, lwd = 2)
-                }
-            }
-        } else {
-            if(is.null(ff)){
-                message("  Could not find ", paste(files[ids], collapse = ", "))
-            } else {
-                message("  Less then ", minCells, " cells in ", label,
-                        " (", flowCore::nrow(ff), "). No quantiles computed.")
-            }
-            quantiles[[label]] <- matrix(NA,
-                                         nrow = nQ,
-                                         ncol = length(channels),
-                                         dimnames =
-                                             list(as.character(quantileValues),
-                                                  channels))
-            if(plot){
-                textPlot(label)
-                for(channel in channels){
-                   textPlot("NA")
-                }
-            }
-        }
+  }
+  
+  # Compute quantiles for each label
+  if (verbose)
+    message("Computing Quantiles")
+  
+  quantiles <- list()
+  if (is.null(quantileValues)) {
+    quantileValues <- ((1:(nQ + 1)) / (nQ + 1))[-(nQ + 1)]
+  } else {
+    nQ <- length(quantileValues)
+  }
+  
+  for (label in unique(labels)) {
+    if (!is(files, "flowSet")) {
+      ids <- which(labels == label & file.exists(files))
+    } else {
+      ids <- which(labels == label)
     }
-
-    return(quantiles)
+    
+    if (verbose)
+      message("  ", label, " (FileID ", paste(ids, collapse = ","), ")")
+    
+    # Read the file(s) and transform if necessary
+    if (length(ids) > 1) {
+      ff <- FlowSOM::AggregateFlowFrames(files[ids],
+                                         1e12,
+                                         keepOrder = TRUE,
+                                         channels = channels,
+                                         ...)
+    } else if (length(ids) == 1) {
+      if (!is(files, "flowSet")) {
+        o <- capture.output(ff <- flowCore::read.flowSet(files[ids], ...))
+        if (verbose)
+          message(o)
+      } else {
+        ff <- files[ids]
+      }
+    } else {
+      ff <- NULL
+    }
+    
+    if (!is.null(ff) && !is.null(transformList)) {
+      ff <- flowCore::transform(ff, transformList)
+    }
+    
+    if (!is.null(ff) & !is.null(selection)) {
+      ff <- ff[selection[[file]], ]
+    }
+    
+    # Compute quantiles for all channels to normalize
+    if (!is.null(ff) && flowCore::nrow(ff[[1]]) > minCells) {
+      quantiles[[label]] <- apply(flowCore::exprs(ff[[1]])[, channels, drop = FALSE], 2, function(x) {
+        stats::quantile(x, quantileValues)
+      })
+      
+      if (plot) {
+        textPlot(label)
+        for (channel in channels) {
+          dens <- stats::density(flowCore::exprs(ff[[1]])[, channel], bw = 0.1)
+          graphics::plot(
+            dens,
+            bty = "n",
+            xaxt = "n",
+            yaxt = "n",
+            xlab = "",
+            ylab = "",
+            main = "",
+            xlim = c(0, max(flowCore::exprs(ff[[1]])[, channel], 8))
+          )
+          graphics::abline(v = quantiles[[label]][, channel], col = "grey")
+          graphics::lines(dens, lwd = 2)
+        }
+      }
+    } else {
+      if (is.null(ff)) {
+        message("  Could not find ", paste(files[ids], collapse = ", "))
+      } else {
+        message(
+          "  Less then ",
+          minCells,
+          " cells in ",
+          label,
+          " (",
+          flowCore::nrow(ff[[1]]),
+          "). No quantiles computed."
+        )
+      }
+      quantiles[[label]] <- matrix(
+        NA,
+        nrow = nQ,
+        ncol = length(channels),
+        dimnames =
+          list(as.character(quantileValues), channels)
+      )
+      if (plot) {
+        textPlot(label)
+        for (channel in channels) {
+          textPlot("NA")
+        }
+      }
+    }
+  }
+  
+  return(quantiles)
 }
 
 #' QuantileNorm.train
@@ -153,7 +192,8 @@ getQuantiles <- function(files,
 #' Typically, you will use the function \code{\link{QuantileNorm.normalize}}
 #' after this function to reverse the batch effects on other files.
 #'
-#' @param files       Full paths of to the fcs files of the control samples
+#' @param files       Full paths of the fcs files of the samples or alternatively
+#' a flowSet.
 #' @param labels      A label for every file, indicating to which batch it
 #'                    belongs, e.g. the plate ID.
 #' @param channels    Names of the channels to normalize
@@ -268,8 +308,8 @@ QuantileNorm.train <- function(files,
                                verbose = FALSE,
                                plot = FALSE,
                                plotTitle = "Quantiles",
-                               ...){
-
+                               ...) {
+  
     if(length(labels) != length(files)){
         stop("Input parameters 'labels' and 'files'",
              " should have the same length")
@@ -429,7 +469,8 @@ QuantileNorm.train <- function(files,
 #'
 #' @param model       Model of the batch effercts, as computed by
 #'                    \code{\link{QuantileNorm.train}}
-#' @param files       Full paths of to the fcs files of the samples to normalize
+#' @param files       Full paths of the fcs files of the samples or alternatively
+#' a flowSet.
 #' @param labels      A label for every file, indicating to which batch it
 #'                    belongs, e.g. the plate ID.
 #' @param transformList   Transformation list to pass to the flowCore

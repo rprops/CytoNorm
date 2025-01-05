@@ -20,7 +20,8 @@ QuantileNorm.train(
 )
 }
 \arguments{
-\item{files}{Full paths of to the fcs files of the control samples}
+\item{files}{Full paths of the fcs files of the samples or alternatively
+a flowSet.}
 
 \item{labels}{A label for every file, indicating to which batch it
 belongs, e.g. the plate ID.}

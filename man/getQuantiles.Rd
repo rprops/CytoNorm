@@ -19,7 +19,8 @@ getQuantiles(
 )
 }
 \arguments{
-\item{files}{Full paths of to the fcs files of the samples}
+\item{files}{Full paths of the fcs files of the samples or alternatively
+a flowSet.}
 
 \item{channels}{Names of the channels to compute the quantiles for}
 
@@ -63,7 +64,12 @@ channels <- grep("Di$", flowCore::colnames(ff), value = TRUE)
 transformList <- flowCore::transformList(channels,
                                          cytofTransform)
 
+# Execute via file path
 quantiles <- getQuantiles(files = file.path(dir, files),
+                          channels = channels,
+                          transformList = transformList)
+# Execute directly on flowSet
+quantiles <- getQuantiles(files = ff,
                           channels = channels,
                           transformList = transformList)
 
