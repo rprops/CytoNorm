@@ -660,7 +660,7 @@ QuantileNorm.normalize <- function(model,
   
   # Normalize each file based on label
   if (!is(files, "flowSet")) {
-    message(date(), " --- applying files processing workflow")
+    # message(date(), " --- applying files processing workflow")
     for (i in seq_along(files)) {
       file <- files[i]
       
