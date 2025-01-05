@@ -87,6 +87,17 @@ QuantileNorm.normalize(model_nQ_99,
                        validation_data$Batch,
                        transformList = transformList,
                        transformList.reverse = transformList.reverse)
+                       
+# With flowSet/flowframe as input
+fs <- flowCore::read.flowSet(path = system.file("extdata", package = "CytoNorm"),
+files = list.files(system.file("extdata", package = "CytoNorm"), pattern = ".fcs"))
+
+fcs_norm <- QuantileNorm.normalize(model = model_nQ_99,
+                       files = files,
+                       labels = validation_data$Batch,
+                       transformList = transformList,
+                       transformList.reverse = transformList.reverse)
+
 }
 \seealso{
 \code{\link{QuantileNorm.train}}
